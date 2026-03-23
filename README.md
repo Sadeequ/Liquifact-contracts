@@ -72,6 +72,14 @@ liquifact-contracts/
 
 ---
 
+
+## Funding Constraints
+- **Minimum Funding:** All funding amounts must be strictly greater than zero ($> 0$). 
+- **Initialization:** Escrow creation will fail if the target amount is not positive.
+- **Integer Safety:** Uses `checked_add` to prevent overflow during funded amount accounting.
+
+---
+
 ## CI/CD
 
 GitHub Actions runs on every push and pull request to `main`:

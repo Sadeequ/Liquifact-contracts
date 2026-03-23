@@ -33,6 +33,9 @@ pub struct LiquifactEscrow;
 #[contractimpl]
 impl LiquifactEscrow {
     /// Initialize a new invoice escrow.
+    /// 
+    /// ### Constraints:
+    /// - `amount` must be greater than zero.
     pub fn init(
         env: Env,
         invoice_id: Symbol,
@@ -41,6 +44,8 @@ impl LiquifactEscrow {
         yield_bps: i64,
         maturity: u64,
     ) -> InvoiceEscrow {
+        assert!(amount > 0, "Escrow amount must be positive");
+        
         let escrow = InvoiceEscrow {
             invoice_id: invoice_id.clone(),
             sme_address: sme_address.clone(),
@@ -65,14 +70,26 @@ impl LiquifactEscrow {
             .unwrap_or_else(|| panic!("Escrow not initialized"))
     }
 
-    /// Record investor funding. In production, this would be called with token transfer.
+    /// Record investor funding.
+    /// 
+    /// ### Constraints:
+    /// - `amount` must be greater than zero.
+    /// - Escrow must be in 'open' status (0).
     pub fn fund(env: Env, _investor: Address, amount: i128) -> InvoiceEscrow {
         let mut escrow = Self::get_escrow(env.clone());
+        
+        // Sanity Check: Reject zero or negative funding amounts
+        assert!(amount > 0, "Funding amount must be positive");
         assert!(escrow.status == 0, "Escrow not open for funding");
-        escrow.funded_amount += amount;
+
+        // Safe accounting: ensure we don't overflow (though i128 is large, it's best practice)
+        escrow.funded_amount = escrow.funded_amount.checked_add(amount)
+            .expect("Funded amount overflow");
+
         if escrow.funded_amount >= escrow.funding_target {
             escrow.status = 1; // funded - ready to release to SME
         }
+        
         env.storage()
             .instance()
             .set(&symbol_short!("escrow"), &escrow);
