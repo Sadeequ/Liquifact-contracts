@@ -129,6 +129,27 @@ Edge cases covered:
 
 ---
 
+## Funding Expiry
+
+Each escrow includes a `funding_deadline`.
+
+### Behavior
+
+- If funding is not completed before deadline:
+  → Escrow transitions to `EXPIRED (3)`
+
+### Guarantees
+
+- No funding allowed after expiry
+- No settlement allowed after expiry
+- Prevents capital lock
+
+### Security Notes
+
+- Expiry is enforced lazily (on interaction)
+- No background execution required
+- Timestamp sourced from ledger (trusted)
+
 ## Future Improvements
 
 - Multi-escrow support
@@ -136,3 +157,4 @@ Edge cases covered:
 - Token integration
 - Event emission
 - Formal verification
+

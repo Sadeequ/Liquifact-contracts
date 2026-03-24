@@ -9,21 +9,18 @@ use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, E
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InvoiceEscrow {
-    /// Unique invoice identifier (e.g. INV-1023)
     pub invoice_id: Symbol,
-    /// SME wallet that receives liquidity
     pub sme_address: Address,
-    /// Total amount in smallest unit (e.g. stroops for XLM)
     pub amount: i128,
-    /// Funding target must be met to release to SME
     pub funding_target: i128,
-    /// Total funded so far by investors
     pub funded_amount: i128,
-    /// Yield basis points (e.g. 800 = 8%)
     pub yield_bps: i64,
-    /// Maturity timestamp (ledger time)
     pub maturity: u64,
-    /// Escrow status: 0 = open, 1 = funded, 2 = settled
+
+    /// NEW: deadline for funding
+    pub funding_deadline: u64,
+
+    /// 0 = open, 1 = funded, 2 = settled, 3 = expired
     pub status: u32,
 }
 
@@ -32,7 +29,6 @@ pub struct LiquifactEscrow;
 
 #[contractimpl]
 impl LiquifactEscrow {
-    /// Initialize a new invoice escrow.
     pub fn init(
         env: Env,
         invoice_id: Symbol,
@@ -40,16 +36,19 @@ impl LiquifactEscrow {
         amount: i128,
         yield_bps: i64,
         maturity: u64,
+        funding_deadline: u64, // NEW
     ) -> InvoiceEscrow {
-        // جلوگیری از overwrite (prevent re-initialization)
         if env.storage().instance().has(&symbol_short!("escrow")) {
             panic!("Escrow already initialized");
         }
 
-        // Input validation
+        let now = env.ledger().timestamp();
+
+        // validations
         assert!(amount > 0, "Amount must be positive");
-        assert!(yield_bps >= 0, "Yield must be non-negative");
-        assert!(maturity > env.ledger().timestamp(), "Invalid maturity");
+        assert!(yield_bps >= 0, "Invalid yield");
+        assert!(funding_deadline > now, "Invalid funding deadline");
+        assert!(maturity > funding_deadline, "Maturity must be after funding deadline");
 
         let escrow = InvoiceEscrow {
             invoice_id: invoice_id.clone(),
@@ -59,75 +58,72 @@ impl LiquifactEscrow {
             funded_amount: 0,
             yield_bps,
             maturity,
-            status: 0, // open
+            funding_deadline,
+            status: 0,
         };
 
-        env.storage()
-            .instance()
-            .set(&symbol_short!("escrow"), &escrow);
-
+        env.storage().instance().set(&symbol_short!("escrow"), &escrow);
         escrow
     }
 
     /// Get current escrow state.
-    pub fn get_escrow(env: Env) -> InvoiceEscrow {
+     pub fn get_escrow(env: Env) -> InvoiceEscrow {
         env.storage()
             .instance()
             .get(&symbol_short!("escrow"))
             .unwrap_or_else(|| panic!("Escrow not initialized"))
     }
 
+    /// INTERNAL: expire escrow if deadline passed
+    fn check_and_update_expiry(env: &Env, escrow: &mut InvoiceEscrow) {
+        let now = env.ledger().timestamp();
+
+        if escrow.status == 0 && now > escrow.funding_deadline {
+            escrow.status = 3; // expired
+        }
+    }
+
     /// Record investor funding. In production, this would be called with token transfer.
     pub fn fund(env: Env, investor: Address, amount: i128) -> InvoiceEscrow {
-        // Authorization
         investor.require_auth();
 
         let mut escrow = Self::get_escrow(env.clone());
 
-        // State + input validation
-        assert!(escrow.status == 0, "Escrow not open for funding");
-        assert!(amount > 0, "Funding amount must be positive");
+        // check expiry first
+        Self::check_and_update_expiry(&env, &mut escrow);
 
-        // Overflow-safe addition
+        assert!(escrow.status == 0, "Escrow not open for funding");
+        assert!(amount > 0, "Invalid funding amount");
+
         escrow.funded_amount = escrow
             .funded_amount
             .checked_add(amount)
-            .expect("Overflow during funding");
+            .expect("Overflow");
 
-        // Transition state
         if escrow.funded_amount >= escrow.funding_target {
             escrow.status = 1; // funded
         }
 
-        env.storage()
-            .instance()
-            .set(&symbol_short!("escrow"), &escrow);
-
+        env.storage().instance().set(&symbol_short!("escrow"), &escrow);
         escrow
     }
 
-    /// Mark escrow as settled (buyer paid). Releases principal + yield to investors.
     pub fn settle(env: Env) -> InvoiceEscrow {
         let mut escrow = Self::get_escrow(env.clone());
 
-        // Ensure proper state
-        assert!(
-            escrow.status == 1,
-            "Escrow must be funded before settlement"
-        );
+        // check expiry
+        Self::check_and_update_expiry(&env, &mut escrow);
 
-        // Optional: enforce maturity (recommended)
+        assert!(escrow.status == 1, "Escrow must be funded");
+
         assert!(
             env.ledger().timestamp() >= escrow.maturity,
             "Cannot settle before maturity"
         );
 
-        escrow.status = 2; // settled
+        escrow.status = 2;
 
-        env.storage()
-            .instance()
-            .set(&symbol_short!("escrow"), &escrow);
-
+        env.storage().instance().set(&symbol_short!("escrow"), &escrow);
         escrow
     }
 }

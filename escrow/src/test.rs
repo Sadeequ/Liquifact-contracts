@@ -97,3 +97,89 @@ fn test_settle_without_funding() {
     client.init(&symbol_short!("INV"), &sme, &100, &10, &1000);
     client.settle();
 }
+
+#[test]
+fn test_expiry_triggers() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let sme = Address::generate(&env);
+    let investor = Address::generate(&env);
+
+    let contract_id = env.register(LiquifactEscrow, ());
+    let client = LiquifactEscrowClient::new(&env, &contract_id);
+
+    let now = env.ledger().timestamp();
+
+    client.init(
+        &symbol_short!("INV"),
+        &sme,
+        &100,
+        &10,
+        &(now + 2000),
+        &(now + 10), // deadline soon
+    );
+
+    // simulate time passing
+    env.ledger().set_timestamp(now + 20);
+
+    let escrow = client.fund(&investor, &10);
+
+    assert_eq!(escrow.status, 3); // expired
+}
+
+#[test]
+#[should_panic]
+fn test_funding_after_expiry_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let sme = Address::generate(&env);
+    let investor = Address::generate(&env);
+
+    let contract_id = env.register(LiquifactEscrow, ());
+    let client = LiquifactEscrowClient::new(&env, &contract_id);
+
+    let now = env.ledger().timestamp();
+
+    client.init(
+        &symbol_short!("INV"),
+        &sme,
+        &100,
+        &10,
+        &(now + 2000),
+        &(now + 5),
+    );
+
+    env.ledger().set_timestamp(now + 100);
+
+    client.fund(&investor, &50);
+}
+
+#[test]
+#[should_panic]
+fn test_settle_expired_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let sme = Address::generate(&env);
+
+    let contract_id = env.register(LiquifactEscrow, ());
+    let client = LiquifactEscrowClient::new(&env, &contract_id);
+
+    let now = env.ledger().timestamp();
+
+    client.init(
+        &symbol_short!("INV"),
+        &sme,
+        &100,
+        &10,
+        &(now + 2000),
+        &(now + 5),
+    );
+
+    env.ledger().set_timestamp(now + 100);
+
+    client.settle();
+}
+
