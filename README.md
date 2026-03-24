@@ -72,6 +72,60 @@ liquifact-contracts/
 
 ---
 
+## Execution cost baselines
+
+The escrow contract ships with repeatable cost-measurement tests that track CPU instruction and memory consumption for every core entry point.  These act as regression guards: if a code change causes resource usage to exceed the recorded baseline the test suite fails with a clear message.
+
+### How it works
+
+Soroban's test environment enables **invocation metering** automatically.  After each contract call, `env.cost_estimate().resources()` returns the exact `instructions` and `mem_bytes` consumed by that invocation.  The helper type `CostMeasurement` (defined in `escrow/src/test.rs`) captures these values, prints them, and exposes assertion helpers.
+
+```
+[cost] init                           instructions=       33765  mem_bytes=      4602
+[cost] fund (partial)                 instructions=       60097  mem_bytes=      9733
+[cost] fund (full / status→funded)    instructions=       60097  mem_bytes=      9733
+[cost] settle                         instructions=       60093  mem_bytes=      9717
+```
+
+Run with output enabled to see the live numbers:
+
+```bash
+cargo test test_cost -- --nocapture
+```
+
+### Recorded baselines (native build, Soroban SDK 25.x)
+
+| Method | Instructions | Memory (bytes) | Upper-bound limit |
+|--------|-------------|----------------|-------------------|
+| `init` | ~33 800 | ~4 600 | 100 000 instr / 15 000 mem |
+| `fund` (partial) | ~60 100 | ~9 700 | 180 000 instr / 30 000 mem |
+| `fund` (full, status flip) | ~60 100 | ~9 700 | 180 000 instr / 30 000 mem |
+| `settle` | ~60 100 | ~9 700 | 180 000 instr / 30 000 mem |
+
+Upper bounds are set at **3× the observed baseline** to absorb minor SDK/toolchain drift while still catching significant regressions.
+
+### Profiling methodology and limitations
+
+* Costs are measured against the **native (non-Wasm) contract build** used in tests.  Real on-chain costs include Wasm VM instantiation overhead and will be higher.
+* Transaction-size fees and XDR round-trip costs are **not** included.
+* For production fee estimates use `stellar-cli contract invoke --simulate` against a live RPC node.
+* The upper-bound limits should be **tightened** as the contract stabilises and the Wasm build is benchmarked.
+
+### Updating baselines
+
+If you intentionally change the contract in a way that increases resource usage:
+
+1. Run `cargo test test_cost -- --nocapture` and note the new numbers.
+2. Update the `assert_instructions_below` / `assert_mem_below` calls in `escrow/src/test.rs`.
+3. Update the table above.
+4. Commit with a message explaining why the cost increased.
+
+### Security note
+
+Cost tests do not replace security audits.  They guard against **unintentional** performance regressions.  Always review storage access patterns and authorisation logic separately.
+
+---
+
 ## CI/CD
 
 GitHub Actions runs on every push and pull request to `main`:
