@@ -6,7 +6,13 @@ use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env};
 // ---------------------------------------------------------------------------
 
 /// Deploy a fresh contract and return (env, client, admin, sme, buyer).
-fn setup() -> (Env, LiquifactEscrowClient<'static>, Address, Address, Address) {
+fn setup() -> (
+    Env,
+    LiquifactEscrowClient<'static>,
+    Address,
+    Address,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
     let admin = Address::generate(&env);
@@ -459,4 +465,3 @@ fn test_get_escrow_uninitialized_panics() {
     let client = LiquifactEscrowClient::new(&env, &contract_id);
     client.get_escrow();
 }
-
