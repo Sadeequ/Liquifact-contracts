@@ -231,7 +231,7 @@ impl LiquifactEscrow {
     ) -> InvoiceEscrow {
         // Prevent re-initialization
         assert!(
-            !env.storage().instance().has(&symbol_short!("escrow")),
+            !env.storage().instance().has(&DataKey::Escrow),
             "Escrow already initialized"
         );
         let escrow = InvoiceEscrow {

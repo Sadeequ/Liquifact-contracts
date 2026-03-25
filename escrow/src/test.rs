@@ -76,7 +76,6 @@ fn test_init_and_get_escrow() {
         &800i64,
         &1000u64,
     );
-
     assert_eq!(escrow.invoice_id, symbol_short!("INV001"));
     assert_eq!(escrow.admin, admin);
     assert_eq!(escrow.sme_address, sme);
@@ -190,7 +189,7 @@ fn test_fund_after_funded_is_rejected() {
 
     client.init(
         &admin,
-        &symbol_short!("INV004"),
+        &symbol_short!("INV010"),
         &sme,
         &10_000_0000000i128,
         &800i64,
@@ -226,7 +225,7 @@ fn test_fund_records_investor_auth() {
 
     client.init(
         &admin,
-        &symbol_short!("INV005"),
+        &symbol_short!("INV010"),
         &sme,
         &1_000i128,
         &500i64,
@@ -251,7 +250,7 @@ fn test_settle_records_sme_auth() {
 
     client.init(
         &admin,
-        &symbol_short!("INV006"),
+        &symbol_short!("INV005"),
         &sme,
         &1_000i128,
         &500i64,
@@ -598,8 +597,18 @@ fn test_over_settlement_failure() {
     let sme = Address::generate(&env);
     let admin = Address::generate(&env);
     let investor = Address::generate(&env);
-    let contract_id = env.register(LiquifactEscrow, ());
-    let client = LiquifactEscrowClient::new(&env, &contract_id);
+    client.init(
+        &admin,
+        &symbol_short!("INV021"),
+        &sme,
+        &10_000_0000000i128,
+        &800i64,
+        &1000u64,
+    );
+    client.fund(&investor, &2_000_0000000i128);
+    client.fund(&investor, &3_000_0000000i128);
+    assert_eq!(client.get_contribution(&investor), 5_000_0000000i128);
+}
 
     client.init(
         &symbol_short!("INV_O1"),
@@ -692,6 +701,10 @@ fn test_yield_bps_stored() {
     let (env, client) = setup();
     let sme = Address::generate(&env);
 
+#[test]
+#[should_panic(expected = "Escrow must be funded before settlement")]
+fn test_settle_before_funded_panics() {
+    let (_, client, admin, sme) = setup();
     client.init(
         &symbol_short!("INV006"),
         &sme,
@@ -764,7 +777,6 @@ fn test_fund_after_funded_panics() {
     let (env, client) = setup();
     let sme = Address::generate(&env);
     let investor = Address::generate(&env);
-
     client.init(
         &symbol_short!("INV010"),
         &sme,
@@ -813,20 +825,46 @@ fn test_settle_not_funded() {
 fn test_update_maturity_success() {
     let env = Env::default();
     env.mock_all_auths();
-
+    let admin = Address::generate(&env);
     let sme = Address::generate(&env);
     let admin = Address::generate(&env);
     let contract_id = env.register(LiquifactEscrow, ());
     let client = LiquifactEscrowClient::new(&env, &contract_id);
-
     client.init(
-        &symbol_short!("INV003"),
+        &admin,
+        &symbol_short!("INV006"),
+        &sme,
+        &1_000i128,
+        &500i64,
+        &0u64,
+    );
+    client.fund(&investor, &1_000i128);
+    client.settle();
+    let auths = env.auths();
+    assert!(
+        auths.iter().any(|(addr, _)| *addr == sme),
+        "sme auth not recorded"
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_settle_unauthorized_panics() {
+    let (env, client, admin, sme) = setup();
+    let investor = Address::generate(&env);
+    client.init(
+        &admin,
+        &symbol_short!("INV008"),
         &sme,
         &admin,
         &10_000_0000000i128,
         &800i64,
         &1000u64,
     );
+    client.fund(&investor, &1_000i128);
+    env.mock_auths(&[]);
+    client.settle();
+}
 
     let new_maturity = 2000u64;
     let escrow = client.update_maturity(&new_maturity);
@@ -851,14 +889,21 @@ fn test_update_maturity_unauthorized() {
     let contract_id = env.register(LiquifactEscrow, ());
     let client = LiquifactEscrowClient::new(&env, &contract_id);
 
+#[test]
+fn test_cost_baseline_fund_partial() {
+    let (env, client, admin, sme) = setup();
+    let investor = Address::generate(&env);
     client.init(
-        &symbol_short!("INV004"),
+        &admin,
+        &symbol_short!("INV001"),
         &sme,
         &admin,
         &10_000_0000000i128,
         &800i64,
         &1000u64,
     );
+    client.fund(&investor, &1_000_0000000i128);
+}
 
     // Attempt to call from attacker. 
     // In Soroban SDK tests, you can switch the address using set_auths or similar, 
@@ -879,17 +924,35 @@ fn test_update_maturity_wrong_state() {
     let sme = Address::generate(&env);
     let admin = Address::generate(&env);
     let investor = Address::generate(&env);
-    let contract_id = env.register(LiquifactEscrow, ());
-    let client = LiquifactEscrowClient::new(&env, &contract_id);
-
     client.init(
-        &symbol_short!("INV005"),
+        &admin,
+        &symbol_short!("INV001"),
+        &sme,
+        &10_000_0000000i128,
+        &800i64,
+        &1000u64,
+    );
+    client.fund(&investor, &5_000_0000000i128);
+    client.fund(&investor, &5_000_0000000i128);
+}
+
+#[test]
+fn test_cost_baseline_settle() {
+    let (env, client, admin, sme) = setup();
+    let investor = Address::generate(&env);
+    client.init(
+        &admin,
+        &symbol_short!("INV001"),
         &sme,
         &admin,
         &10_000_0000000i128,
         &800i64,
         &1000u64,
     );
+    client.fund(&investor, &10_000_0000000i128);
+    env.ledger().set_timestamp(1001);
+    client.settle();
+}
 
     // Fund the escrow to change state to 1 (Funded)
     client.fund(&investor, &10_000_0000000i128);
