@@ -5,12 +5,9 @@ use soroban_sdk::{
     Address, Env,
 };
 
-use super::{LiquifactEscrow, LiquifactEscrowClient, SCHEMA_VERSION, DataKey, InvoiceEscrow};
-use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env, Map};
-
-fn deploy(env: &Env) -> (LiquifactEscrowClient<'_>, Address) {
+fn deploy(env: &Env) -> LiquifactEscrowClient<'_> {
     let id = env.register(LiquifactEscrow, ());
-    (LiquifactEscrowClient::new(env, &id), id)
+    LiquifactEscrowClient::new(env, &id)
 }
 
 fn setup(env: &Env) -> (LiquifactEscrowClient<'_>, Address, Address) {
@@ -21,21 +18,18 @@ fn setup(env: &Env) -> (LiquifactEscrowClient<'_>, Address, Address) {
     (client, admin, sme)
 }
 
-fn setup_escrow(_env: &Env, client: &LiquifactEscrowClient, admin: &Address, sme: &Address) {
+fn default_init(client: &LiquifactEscrowClient<'_>, admin: &Address, sme: &Address) {
     client.init(
         admin,
         &symbol_short!("INV001"),
         sme,
-        &10_000i128,
-        &800u32,
+        &10_000_0000000i128,
+        &800i64,
         &1000u64,
     );
 }
 
-/// Ledger "now" used for valid maturities in tests.
-fn t0(env: &Env) -> u64 {
-    env.ledger().timestamp()
-}
+const TARGET: i128 = 10_000_0000000i128;
 
 #[test]
 fn test_init_stores_escrow() {
@@ -45,15 +39,15 @@ fn test_init_stores_escrow() {
         &admin,
         &symbol_short!("INV001"),
         &sme,
-        &10_000i128,
-        &800u32,
+        &TARGET,
+        &800i64,
         &1000u64,
     );
     assert_eq!(escrow.invoice_id, symbol_short!("INV001"));
     assert_eq!(escrow.admin, admin);
     assert_eq!(escrow.sme_address, sme);
-    assert_eq!(escrow.amount, 10_000_0000000i128);
-    assert_eq!(escrow.funding_target, 10_000_0000000i128);
+    assert_eq!(escrow.amount, TARGET);
+    assert_eq!(escrow.funding_target, TARGET);
     assert_eq!(escrow.funded_amount, 0);
     assert_eq!(escrow.yield_bps, 800);
     assert_eq!(escrow.maturity, 1000);
@@ -68,8 +62,8 @@ fn test_init_stores_keyed_invoice_and_lists_it() {
         &admin,
         &symbol_short!("INV001"),
         &sme,
-        &10_000_0000000i128,
-        &800u64,
+        &TARGET,
+        &800i64,
         &1000u64,
     );
     let got = client.get_escrow();
@@ -88,7 +82,7 @@ fn test_init_requires_admin_auth() {
         &admin,
         &symbol_short!("INVB"),
         &sme,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &1000u64,
     );
@@ -101,7 +95,6 @@ fn test_init_requires_admin_auth() {
 #[test]
 fn test_init_unauthorized_panics() {
     let env = Env::default();
-    // No mock_all_auths — admin.require_auth() will panic
     let client = deploy(&env);
     let admin = Address::generate(&env);
     let sme = Address::generate(&env);
@@ -135,7 +128,7 @@ fn test_get_escrow_uninitialized_panics() {
     client.get_escrow();
 }
 
-// ── fund ──────────────────────────────────────────────────────────────────────
+// --- fund ---
 
 #[test]
 fn test_fund_and_settle() {
@@ -146,12 +139,12 @@ fn test_fund_and_settle() {
         &admin,
         &symbol_short!("INVMETA"),
         &sme,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &0u64,
     );
-    let funded = client.fund(&investor, &10_000_0000000i128);
-    assert_eq!(funded.funded_amount, 10_000_0000000i128);
+    let funded = client.fund(&investor, &TARGET);
+    assert_eq!(funded.funded_amount, TARGET);
     assert_eq!(funded.status, 1);
     let settled = client.settle();
     assert_eq!(settled.status, 2);
@@ -166,19 +159,18 @@ fn test_fund_partial_then_full() {
         &admin,
         &symbol_short!("INV002"),
         &sme,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &0u64,
     );
-    let partial = client.fund(&investor, &5_000_0000000i128);
+    let partial = client.fund(&investor, &(TARGET / 2));
     assert_eq!(partial.status, 0);
-    assert_eq!(partial.funded_amount, 5_000_0000000i128);
-    let full = client.fund(&investor, &5_000_0000000i128);
+    assert_eq!(partial.funded_amount, TARGET / 2);
+    let full = client.fund(&investor, &(TARGET / 2));
     assert_eq!(full.status, 1);
-    assert_eq!(full.funded_amount, 10_000_0000000i128);
+    assert_eq!(full.funded_amount, TARGET);
 }
 
-/// `get_escrow` panics before initialization
 #[test]
 #[should_panic(expected = "Funding amount must be positive")]
 fn test_fund_zero_amount_panics() {
@@ -196,7 +188,7 @@ fn test_fund_after_funded_panics() {
     let (client, admin, sme) = setup(&env);
     let investor = Address::generate(&env);
     default_init(&client, &admin, &sme);
-    client.fund(&investor, &10_000_0000000i128);
+    client.fund(&investor, &TARGET);
     client.fund(&investor, &1i128);
 }
 
@@ -206,14 +198,13 @@ fn test_fund_requires_investor_auth() {
     let (client, admin, sme) = setup(&env);
     let investor = Address::generate(&env);
     default_init(&client, &admin, &sme);
-    client.fund(&investor, &10_000_0000000i128);
+    client.fund(&investor, &TARGET);
     assert!(
         env.auths().iter().any(|(addr, _)| *addr == investor),
         "investor auth was not recorded for fund"
     );
 }
 
-/// Funding reaches target and transitions to funded status
 #[test]
 fn test_single_investor_contribution_tracked() {
     let env = Env::default();
@@ -223,11 +214,11 @@ fn test_single_investor_contribution_tracked() {
         &admin,
         &symbol_short!("INV020"),
         &sme,
-        &10_000_0000000i128,
-        &800u64,
+        &TARGET,
+        &800i64,
         &1000u64,
     );
-    client.fund(&investor, &3_000_0000000i128);
+    client.fund(&investor, &(3_000_0000000i128));
     let contribution = client.get_contribution(&investor);
     assert_eq!(contribution, 3_000_0000000i128);
 }
@@ -243,8 +234,6 @@ fn test_unknown_investor_contribution_is_zero() {
     assert_eq!(client.get_contribution(&stranger), 0i128);
 }
 
-// ── event: init ───────────────────────────────────────────────────────────────
-
 #[test]
 fn test_repeated_funding_accumulates_contribution() {
     let env = Env::default();
@@ -254,18 +243,15 @@ fn test_repeated_funding_accumulates_contribution() {
         &admin,
         &symbol_short!("INV021"),
         &sme,
-        &10_000_0000000i128,
-        &800u64,
+        &TARGET,
+        &800i64,
         &1000u64,
     );
-    client.fund(&investor, &2_000_0000000i128);
-    client.fund(&investor, &3_000_0000000i128);
+    client.fund(&investor, &(2_000_0000000i128));
+    client.fund(&investor, &(3_000_0000000i128));
     assert_eq!(client.get_contribution(&investor), 5_000_0000000i128);
 }
 
-// ── event: fund (partial) ─────────────────────────────────────────────────────
-
-/// Partial funding maintains open status
 #[test]
 fn test_multiple_investors_tracked_independently() {
     let env = Env::default();
@@ -277,13 +263,13 @@ fn test_multiple_investors_tracked_independently() {
         &admin,
         &symbol_short!("INV023"),
         &sme,
-        &10_000_0000000i128,
-        &800u64,
+        &TARGET,
+        &800i64,
         &1000u64,
     );
-    client.fund(&inv_a, &2_000_0000000i128);
-    client.fund(&inv_b, &5_000_0000000i128);
-    client.fund(&inv_c, &3_000_0000000i128);
+    client.fund(&inv_a, &(2_000_0000000i128));
+    client.fund(&inv_b, &(5_000_0000000i128));
+    client.fund(&inv_c, &(3_000_0000000i128));
     assert_eq!(client.get_contribution(&inv_a), 2_000_0000000i128);
     assert_eq!(client.get_contribution(&inv_b), 5_000_0000000i128);
     assert_eq!(client.get_contribution(&inv_c), 3_000_0000000i128);
@@ -293,11 +279,6 @@ fn test_multiple_investors_tracked_independently() {
     assert_eq!(sum, client.get_escrow().funded_amount);
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Settlement Tests
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// Settlement transitions escrow to settled status
 #[test]
 fn test_contributions_sum_equals_funded_amount() {
     let env = Env::default();
@@ -307,22 +288,22 @@ fn test_contributions_sum_equals_funded_amount() {
     let inv_c = Address::generate(&env);
     client.init(
         &admin,
-        &symbol_short!("INV023"),
+        &symbol_short!("INV023b"),
         &sme,
-        &10_000_0000000i128,
-        &800u64,
+        &TARGET,
+        &800i64,
         &1000u64,
     );
-    client.fund(&inv_a, &2_000_0000000i128);
-    client.fund(&inv_b, &5_000_0000000i128);
-    client.fund(&inv_c, &3_000_0000000i128);
+    client.fund(&inv_a, &(2_000_0000000i128));
+    client.fund(&inv_b, &(5_000_0000000i128));
+    client.fund(&inv_c, &(3_000_0000000i128));
     let sum = client.get_contribution(&inv_a)
         + client.get_contribution(&inv_b)
         + client.get_contribution(&inv_c);
     assert_eq!(sum, client.get_escrow().funded_amount);
 }
 
-// ── settle ────────────────────────────────────────────────────────────────────
+// --- settle ---
 
 #[test]
 fn test_settle_after_full_funding() {
@@ -333,16 +314,14 @@ fn test_settle_after_full_funding() {
         &admin,
         &symbol_short!("INV003"),
         &sme,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &0u64,
     );
-    client.fund(&investor, &10_000_0000000i128);
+    client.fund(&investor, &TARGET);
     let settled = client.settle();
     assert_eq!(settled.status, 2);
 }
-
-// ── event: settle ─────────────────────────────────────────────────────────────
 
 #[test]
 #[should_panic(expected = "Escrow must be funded before settlement")]
@@ -360,11 +339,6 @@ fn test_settle_before_funded_panics() {
     client.settle();
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Update Maturity Tests
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// Admin can update maturity in open state
 #[test]
 fn test_settle_requires_sme_auth() {
     let env = Env::default();
@@ -404,7 +378,6 @@ fn test_settle_unauthorized_panics() {
         &0u64,
     );
     client.fund(&investor, &1_000i128);
-    // Clear all auths so settle fails
     env.mock_auths(&[]);
     client.settle();
 }
@@ -424,7 +397,6 @@ fn test_settle_before_maturity_panics() {
         &1000u64,
     );
     client.fund(&investor, &1_000i128);
-    // ledger timestamp is 0, maturity is 1000 — should panic
     client.settle();
 }
 
@@ -480,7 +452,6 @@ fn test_settle_with_zero_maturity_succeeds_immediately() {
         &0u64,
     );
     client.fund(&investor, &1_000i128);
-    // timestamp is 0, maturity is 0 — skip check
     let settled = client.settle();
     assert_eq!(settled.status, 2);
 }
@@ -499,7 +470,6 @@ fn test_settle_at_timestamp_zero_before_maturity_panics() {
         &500u64,
     );
     client.fund(&investor, &1_000i128);
-    // timestamp is 0, maturity is 500 — should panic
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.settle();
     }));
@@ -509,7 +479,7 @@ fn test_settle_at_timestamp_zero_before_maturity_panics() {
     );
 }
 
-// ── update_maturity ───────────────────────────────────────────────────────────
+// --- update_maturity ---
 
 #[test]
 fn test_update_maturity_success() {
@@ -517,7 +487,7 @@ fn test_update_maturity_success() {
     let (client, admin, sme) = setup(&env);
     client.init(
         &admin,
-        &symbol_short!("INV006"),
+        &symbol_short!("INV006b"),
         &sme,
         &1_000i128,
         &500i64,
@@ -542,7 +512,7 @@ fn test_update_maturity_wrong_state() {
         &500i64,
         &0u64,
     );
-    client.fund(&investor, &1_000i128); // status -> 1
+    client.fund(&investor, &1_000i128);
     client.update_maturity(&2000u64);
 }
 
@@ -562,12 +532,11 @@ fn test_update_maturity_unauthorized() {
         &500i64,
         &0u64,
     );
-    // Remove all auths so admin.require_auth() fails
     env.mock_auths(&[]);
     client.update_maturity(&2000u64);
 }
 
-// ── transfer_admin ────────────────────────────────────────────────────────────
+// --- transfer_admin ---
 
 #[test]
 fn test_transfer_admin_updates_admin() {
@@ -578,8 +547,8 @@ fn test_transfer_admin_updates_admin() {
         &admin,
         &symbol_short!("T001"),
         &sme,
-        &10_000_0000000i128,
-        &800u64,
+        &TARGET,
+        &800i64,
         &1000u64,
     );
     let updated = client.transfer_admin(&new_admin);
@@ -596,8 +565,7 @@ fn test_transfer_admin_same_address_panics() {
         &admin,
         &symbol_short!("T002"),
         &sme,
-        &admin,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &1000u64,
     );
@@ -614,7 +582,7 @@ fn test_transfer_admin_uninitialized_panics() {
     client.transfer_admin(&new_admin);
 }
 
-// ── migrate ───────────────────────────────────────────────────────────────────
+// --- migrate ---
 
 #[test]
 #[should_panic(expected = "Already at current schema version")]
@@ -634,7 +602,197 @@ fn test_migrate_wrong_from_version_panics() {
     client.migrate(&99u32);
 }
 
-// ── cost baselines ────────────────────────────────────────────────────────────
+#[test]
+#[should_panic(expected = "No migration path from version 0")]
+fn test_migrate_from_zero_uninitialized_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = deploy(&env);
+    client.migrate(&0u32);
+}
+
+// --- SME collateral (record-only) ---
+
+#[test]
+fn test_record_collateral_stored_and_does_not_block_settle() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let investor = Address::generate(&env);
+    client.init(
+        &admin,
+        &symbol_short!("COL001"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+    );
+    let c = client.record_sme_collateral_commitment(&symbol_short!("USDC"), &5000i128);
+    assert_eq!(c.amount, 5000i128);
+    assert_eq!(c.asset, symbol_short!("USDC"));
+    assert!(client.get_sme_collateral_commitment().is_some());
+
+    client.fund(&investor, &TARGET);
+    let settled = client.settle();
+    assert_eq!(settled.status, 2);
+}
+
+#[test]
+#[should_panic(expected = "Collateral amount must be positive")]
+fn test_collateral_zero_panics() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    client.init(
+        &admin,
+        &symbol_short!("COL002"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+    );
+    client.record_sme_collateral_commitment(&symbol_short!("XLM"), &0i128);
+}
+
+#[test]
+#[should_panic]
+fn test_collateral_requires_sme_auth() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    client.init(
+        &admin,
+        &symbol_short!("COL003"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+    );
+    env.mock_auths(&[]);
+    client.record_sme_collateral_commitment(&symbol_short!("XLM"), &100i128);
+}
+
+// --- legal hold ---
+
+#[test]
+fn test_legal_hold_blocks_settle_withdraw_claim_and_fund() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let investor = Address::generate(&env);
+    client.init(
+        &admin,
+        &symbol_short!("LH001"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+    );
+    client.fund(&investor, &TARGET);
+    client.set_legal_hold(&true);
+    assert!(client.get_legal_hold());
+
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.settle();
+    }))
+    .is_err());
+
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.withdraw();
+    }))
+    .is_err());
+
+    client.clear_legal_hold();
+    assert!(!client.get_legal_hold());
+    let settled = client.settle();
+    assert_eq!(settled.status, 2);
+
+    client.set_legal_hold(&true);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.claim_investor_payout(&investor);
+    }))
+    .is_err());
+
+    client.clear_legal_hold();
+    client.claim_investor_payout(&investor);
+    assert!(client.is_investor_claimed(&investor));
+}
+
+#[test]
+#[should_panic(expected = "Legal hold blocks new funding while active")]
+fn test_legal_hold_blocks_new_funds_when_open() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let investor = Address::generate(&env);
+    client.init(
+        &admin,
+        &symbol_short!("LH002"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+    );
+    client.set_legal_hold(&true);
+    client.fund(&investor, &1i128);
+}
+
+#[test]
+fn test_withdraw_funded_then_cannot_settle() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let investor = Address::generate(&env);
+    client.init(
+        &admin,
+        &symbol_short!("WD001"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+    );
+    client.fund(&investor, &TARGET);
+    let wd = client.withdraw();
+    assert_eq!(wd.status, 3);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.settle();
+    }))
+    .is_err());
+}
+
+#[test]
+#[should_panic(expected = "Investor already claimed")]
+fn test_claim_investor_twice_panics() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let investor = Address::generate(&env);
+    client.init(
+        &admin,
+        &symbol_short!("CL001"),
+        &sme,
+        &1_000i128,
+        &400i64,
+        &0u64,
+    );
+    client.fund(&investor, &1_000i128);
+    client.settle();
+    client.claim_investor_payout(&investor);
+    client.claim_investor_payout(&investor);
+}
+
+#[test]
+#[should_panic(expected = "Escrow must be settled before investor claim")]
+fn test_claim_before_settle_panics() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let investor = Address::generate(&env);
+    client.init(
+        &admin,
+        &symbol_short!("CL002"),
+        &sme,
+        &1_000i128,
+        &400i64,
+        &0u64,
+    );
+    client.fund(&investor, &1_000i128);
+    client.claim_investor_payout(&investor);
+}
+
+// --- cost baselines ---
 
 #[test]
 fn test_cost_baseline_init() {
@@ -644,7 +802,7 @@ fn test_cost_baseline_init() {
         &admin,
         &symbol_short!("INV100"),
         &sme,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &1000u64,
     );
@@ -658,7 +816,7 @@ fn test_cost_baseline_init_zero_maturity() {
         &admin,
         &symbol_short!("INV101"),
         &sme,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &0u64,
     );
@@ -687,11 +845,11 @@ fn test_cost_baseline_fund_partial() {
         &admin,
         &symbol_short!("INV103"),
         &sme,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &1000u64,
     );
-    client.fund(&investor, &1_000_0000000i128);
+    client.fund(&investor, &(1_000_0000000i128));
 }
 
 #[test]
@@ -703,11 +861,11 @@ fn test_cost_baseline_fund_full() {
         &admin,
         &symbol_short!("INV104"),
         &sme,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &1000u64,
     );
-    client.fund(&investor, &10_000_0000000i128);
+    client.fund(&investor, &TARGET);
 }
 
 #[test]
@@ -719,11 +877,11 @@ fn test_cost_baseline_fund_overshoot() {
         &admin,
         &symbol_short!("INV105"),
         &sme,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &1000u64,
     );
-    client.fund(&investor, &15_000_0000000i128);
+    client.fund(&investor, &(15_000_0000000i128));
     assert_eq!(client.get_escrow().status, 1);
 }
 
@@ -736,12 +894,12 @@ fn test_cost_baseline_fund_two_step_completion() {
         &admin,
         &symbol_short!("INV106"),
         &sme,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &1000u64,
     );
-    client.fund(&investor, &5_000_0000000i128);
-    client.fund(&investor, &5_000_0000000i128);
+    client.fund(&investor, &(TARGET / 2));
+    client.fund(&investor, &(TARGET / 2));
     assert_eq!(client.get_escrow().status, 1);
 }
 
@@ -752,13 +910,13 @@ fn test_cost_baseline_settle() {
     let investor = Address::generate(&env);
     client.init(
         &admin,
-        &symbol_short!("INV103"),
+        &symbol_short!("INV103b"),
         &sme,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &1000u64,
     );
-    client.fund(&investor, &10_000_0000000i128);
+    client.fund(&investor, &TARGET);
     env.ledger().set_timestamp(1001);
     let settled = client.settle();
     assert_eq!(settled.status, 2);
@@ -773,17 +931,17 @@ fn test_cost_baseline_full_lifecycle() {
         &admin,
         &symbol_short!("INV110"),
         &sme,
-        &10_000_0000000i128,
+        &TARGET,
         &800i64,
         &1000u64,
     );
-    client.fund(&investor, &10_000_0000000i128);
+    client.fund(&investor, &TARGET);
     env.ledger().set_timestamp(1000);
     let settled = client.settle();
     assert_eq!(settled.status, 2);
 }
 
-// ── property-based tests ──────────────────────────────────────────────────────
+// --- property-based tests ---
 
 use proptest::prelude::*;
 
@@ -801,7 +959,6 @@ proptest! {
         let investor2 = Address::generate(&env);
         let client = deploy(&env);
 
-        // Use a large target so both fundings can happen
         let target = 20_000_0000000i128;
         client.init(&admin, &symbol_short!("INVTST"), &sme, &target, &800i64, &0u64);
 
@@ -845,5 +1002,3 @@ proptest! {
         }
     }
 }
-
-── END LEGACY ────────────────────────────────────────────────────────────── */
