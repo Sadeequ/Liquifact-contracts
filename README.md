@@ -1,279 +1,147 @@
 # LiquiFact Escrow Contract
 
-Soroban smart contracts for **LiquiFact** on Stellar. This repository currently
-contains the `escrow` contract crate and its supporting documentation.
+Soroban smart contracts for **LiquiFact** on Stellar. This repository contains the `escrow` crate: a single-instance invoice escrow with funding, optional SME collateral **records**, compliance **legal hold**, SME withdrawal, settlement, and per-investor accounting.
 
-## Storage Schema And Upgrade Compatibility
+## Contract API (summary)
 
-**Risk:**
-- Unauthorized caller could attempt to `fund`, `confirm_payment`, `settle`, or `redeem`
+| Method | Purpose |
+|--------|---------|
+| `init` | Create escrow (admin auth). Sets `funding_target = amount`. |
+| `get_escrow` / `get_version` / `get_legal_hold` | Read state. |
+| `get_contribution` | Per-investor funded principal. |
+| `update_funding_target` | Admin, open state only; target ≥ `funded_amount`. |
+| `fund` | Investor auth; blocked while legal hold is active. |
+| `withdraw` | SME auth; funded → withdrawn; blocked under legal hold. |
+| `settle` | SME auth; funded → settled (maturity gate if set); blocked under legal hold. |
+| `claim_investor_payout` | Investor auth; after settle; blocked under legal hold. |
+| `record_sme_collateral_commitment` | SME auth; **record-only** pledge (asset + amount + timestamp). |
+| `get_sme_collateral_commitment` / `is_investor_claimed` | Reads. |
+| `set_legal_hold` / `clear_legal_hold` | Admin governance (hold blocks risk-bearing transitions). |
+| `update_maturity` | Admin, open state only. |
+| `transfer_admin` | Admin rotation. |
+| `migrate` | Version guardrails (see upgrade policy below). |
 
-- the raw storage inventory actually declared or referenced by source
-- the narrative schema view reviewers should rely on when evaluating upgrades
-- known divergences where code and documentation cannot yet be made perfectly clean
+### Optional SME collateral (record-only)
 
-**Mitigation (Current):**
-- Role-based authorization:
-  - `fund`: the caller must be the `investor`
-  - `confirm_payment`: the configured `buyer_address` must authorize
-  - `settle`: the configured `sme_address` must authorize
-  - `redeem`: the caller must be the `investor`
+`record_sme_collateral_commitment` stores a [`SmeCollateralCommitment`](escrow/src/lib.rs) under `DataKey::SmeCollateralPledge`. It does **not** lock tokens on-chain or trigger liquidation. Indexers should treat it as a disclosure field for future enforcement hooks; **no false liquidation** is possible from this field alone because no asset movement or status transition depends on it.
 
-**Recommended Controls:**
-- Keep read-only queries (`get_investor_position`) free of auth requirements, while ensuring state-changing calls are auth-gated.
+### Legal / compliance hold
 
----
+When `DataKey::LegalHold` is true, the contract rejects new `fund`, `settle`, SME `withdraw`, and `claim_investor_payout`. Only the stored **admin** may set or clear the hold. **Emergency policy:** there is no separate break-glass entrypoint; recovery is via governed `admin` (multisig / DAO). Document operational playbooks off-chain so holds cannot strand funds without governance.
 
-## Initialization validation
+### Storage keys (`DataKey`)
 
-**Risk:**
-
-- `funded_amount += amount` may overflow `i128`
-
----
-
-- instance storage references currently use the literal keys `"escrow"` and `"version"`
-- the persisted escrow record is the `InvoiceEscrow` struct as declared in source
-- any API parameter or helper that is not written into storage is excluded from the
-  persisted schema narrative and called out separately as divergence
-
-### Raw storage inventory
-
-#### Instance storage keys referenced by source
-
-| Key | Source usage | Stored value |
-|---|---|---|
-| `"escrow"` | `get_escrow`, `init`, `fund`, `settle`, `update_maturity`, `withdraw`, migration example | `InvoiceEscrow` |
-| `"version"` | `init`, `get_version`, `migrate` | `u32` schema version |
-
-#### Persisted struct fields exactly as declared in `InvoiceEscrow`
-
-| Command                    | Description                   |
-|----------------------------|-------------------------------|
-| `cargo build`              | Build all contracts           |
-| `cargo test`               | Run unit tests                |
-| `cargo fmt`                | Format code                   |
-| `cargo fmt -- --check`     | Check formatting (used in CI) |
-
-### Narrative schema view
-
-The contract is trying to persist a single escrow snapshot plus an explicit
-schema version:
-
-- `"escrow"` stores the full invoice escrow snapshot
-- `"version"` stores the current schema version independently for upgrade checks
-
-For reviewer guidance, the intended persisted escrow fields are:
-
-| Field | Intended meaning |
-|---|---|
-| `invoice_id` | Short invoice identifier used as part of the escrow record |
-| `admin` | Administrative address intended to control privileged maintenance actions |
-| `sme_address` | SME beneficiary address |
-| `amount` | Principal amount |
-| `funding_target` | Funding threshold, currently initialized from `amount` |
-| `funded_amount` | Running funded total |
-| `settled_amount` | Running settled total; source support exists but behavior is still inconsistent |
-| `yield_bps` | Yield in basis points |
-| `maturity` | Maturity timestamp |
-| `status` | Lifecycle state flag |
-| `version` | Persisted schema version, expected to track `SCHEMA_VERSION` |
-
-### Status values
-
-- **init** — Create an invoice escrow (invoice id, SME address, amount, yield bps, maturity). Emits `init` event.
-- **get_escrow** — Read current escrow state.
-- **get_version** — Return the stored schema version number.
-- **confirm_payment** — Buyer confirms repayment (sets `is_paid = true`).
-- **fund** — Record investor funding; status becomes "funded" when target is met.
-- **settle** — Mark escrow as settled (buyer paid; investors receive principal + yield).
-- **redeem** — Mark an investor’s claim as redeemed (accounting only).
-- **get_investor_position** — Read-only investor position query (issue #45).
-- **migrate** — Upgrade storage from an older schema version to the current one (see below).
-
-### Maturity gate
-
-`settle` enforces two guards before advancing status to `settled (2)`:
-
-1. **Funding check** — `status` must equal `1` (fully funded). Attempting to settle an unfunded escrow panics with `"Escrow must be funded before settlement"`.
-2. **Time check** — `env.ledger().timestamp()` must be **≥ `maturity`**. Attempting to settle before the invoice is due panics with `"Cannot settle before maturity timestamp"`.
-
-`env.ledger().timestamp()` is the canonical Soroban on-chain clock. It is set by the Stellar network and **cannot be manipulated by the contract caller**, making it safe to use as a time gate.
-
-| Ledger time vs maturity | Status | Result |
-|-------------------------|--------|--------|
-| `now < maturity`        | funded | panic — premature settlement blocked |
-| `now == maturity`       | funded | success |
-| `now > maturity`        | funded | success |
-| any                     | open   | panic — not yet funded |
-
-Setting `maturity = 0` effectively disables the time lock (any timestamp ≥ 0).
+Public enum in [`escrow/src/lib.rs`](escrow/src/lib.rs): `Escrow`, `Version`, `InvestorContribution(Address)`, `LegalHold`, `SmeCollateralPledge`, `InvestorClaimed(Address)`. New optional keys should keep **additive** names and avoid reusing or repurposing existing variants.
 
 ---
 
-### Events
+## Storage-only upgrade policy (additive fields)
 
-The contract emits Soroban events on every state-changing call, enabling off-chain indexers and analytics.
+**Compatible without redeploy** when you only:
 
-| Method   | Topics                   | Payload fields                                   |
-|----------|--------------------------|--------------------------------------------------|
-| `init`   | `["init", invoice_id]`   | `sme_address`, `amount`, `yield_bps`, `maturity` |
-| `fund`   | `["fund", invoice_id]`   | `investor`, `amount`, `funded_amount`, `status`  |
-| `settle` | `["settle", invoice_id]` | `sme_address`, `amount`, `yield_bps`             |
+- Add **new** `DataKey` variants and/or new `#[contracttype]` structs stored under **new** keys.
+- Read new keys with `.get(...).unwrap_or(default)` so missing keys behave as “unset” on old deployments.
 
-All payload types (`InitEvent`, `FundEvent`, `SettleEvent`) are exported `#[contracttype]` structs — see [`escrow/src/lib.rs`](escrow/src/lib.rs) for full field documentation.
+**Requires new deployment or explicit migration** when you:
 
-The `invoice_id` in the topic allows indexers to filter events by invoice without decoding the payload.
+- Change layout or meaning of an existing stored type (e.g. new required field on `InvoiceEscrow` without a migration that rewrites `DataKey::Escrow`).
+- Rename or change the XDR shape of an existing `DataKey` variant used in production.
 
-- Re-initialization protection is intended, but the current guard references undefined helper machinery.
-- Upgrade paths should be admin-gated before production deployment.
-- Migration code must never silently drop or reinterpret historical fields.
-- Reviewers should treat source drift as a signal to preserve backward decoders and add focused migration tests before any schema evolution lands.
+**Compatibility test plan (short):**
 
-State-changing methods enforce Stellar auth using `require_auth()`:
-- `fund` requires authorization from the caller (the `investor`).
-- `confirm_payment` requires authorization from the configured `buyer_address`.
-- `settle` requires authorization from the configured `sme_address`.
-- `redeem` requires authorization from the caller (the `investor`).
+1. Deploy version _N_; exercise `init`, `fund`, `settle`.
+2. Deploy version _N+1_ with only new optional keys; repeat flows; assert old instances still readable.
+3. If `InvoiceEscrow` changes, add a migration test or document mandatory redeploy.
 
-Read-only methods (including `get_investor_position`) do not require auth, and return only public accounting data (amounts, escrow status, and claim flags).
+`migrate` today validates `from_version` against stored `DataKey::Version` and errors if no path is implemented.
 
-- Legacy singleton value exists under key `"escrow"`
-- Legacy `invoice_id` must match the provided `invoice_id`
-- Target keyed invoice must not already exist
+### `DataKey` naming convention
 
-## Contract lifecycle
-
-## Funding Constraints
-
-- **Minimum Funding:** All funding amounts must be strictly greater than zero ($> 0$).
-- **Initialization:** Escrow creation will fail if the target amount is not positive.
-- **Integer Safety:** Uses `checked_add` to prevent overflow during funded amount accounting.
-- **Governance Controls (Target Update):** The funding target size (`amount`) can be modified by the initialized `admin`. It enforces strict governance constraints: it can only be modified when the escrow is `Open` (status = 0), the new target must be strictly positive, and it can never be less than the existing `funded_amount`.
-
-- `0` open
-- `1` funded
-- `2` settled
-
-Main methods:
-
-- `init`
-- `get_escrow`
-- `list_invoices`
-- `fund`
-- `settle`
-- `update_maturity`
-- `transfer_admin`
-- `migrate_singleton`
-
-| Command | Description |
-|---------|-------------|
-| `cargo build` | Build the contract |
-| `cargo test` | Tests (with `testutils` where needed) |
-| `cargo fmt --all -- --check` | CI formatting |
-| `cargo llvm-cov --features testutils --fail-under-lines 95 --summary-only` | Coverage gate (matches CI) |
+Use PascalCase variant names matching persisted role (`LegalHold`, `SmeCollateralPledge`). Per-address maps use wrapper variants: `InvestorContribution(Address)`, `InvestorClaimed(Address)`.
 
 ---
 
-## Invariants
+## Release runbook: build, deploy, verify
 
-- `funded_amount <= funding_target` (soft enforced)
-- `status transitions`: 0 → 1 → 2
-- Cannot settle before funded
-| Step | Command | Fails if… |
-|------|---------|-----------|
-| Format | `cargo fmt --all -- --check` | any file is not formatted |
-| Build | `cargo build` | compilation error |
-| Tests | `cargo test` | any test fails |
-| Coverage | `cargo llvm-cov --features testutils --fail-under-lines 95` | line coverage < 95% |
+**Who may deploy production:** only addresses and keys owned by LiquiFact governance (multisig / custody). Treat contract admin and deployer secrets as **highly sensitive**.
 
-### Coverage gate
+### Environment variables (example)
 
-The pipeline uses [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov)
-to measure line coverage and fail when it drops below **95%**.
+| Variable | Purpose |
+|----------|---------|
+| `STELLAR_NETWORK` | e.g. `TESTNET` / `PUBLIC` / custom Horizon passphrase |
+| `SOROBAN_RPC_URL` | Soroban RPC endpoint |
+| `SOURCE_SECRET` | Funding / deployer Stellar secret key (S ...) |
+| `LIQUIFACT_ADMIN_ADDRESS` | Initial admin intended to control holds and funding target |
+
+Exact CLI flags change between Soroban releases; always cross-check [Stellar Soroban docs](https://developers.stellar.org/docs/tools/soroban-cli/stellar-cli) for your installed `stellar` / `soroban` CLI version.
+
+### Build WASM
+
+```bash
+rustup target add wasm32v1-none
+cargo build --target wasm32v1-none --release
+# Artifact (typical):
+# target/wasm32v1-none/release/liquifact_escrow.wasm
+```
+
+### Deploy (example flow)
+
+```bash
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/liquifact_escrow.wasm \
+  --source-account "$SOURCE_SECRET" \
+  --network "$STELLAR_NETWORK" \
+  --rpc-url "$SOROBAN_RPC_URL"
+# Record emitted contract id as LIQUIFACT_ESCROW_CONTRACT_ID
+```
+
+Initialize on-chain with `init` via `stellar contract invoke` (pass `admin`, `invoice_id`, `sme_address`, amounts, `yield_bps`, `maturity` per your product).
+
+### Verify artifact hash
+
+```bash
+shasum -a 256 target/wasm32v1-none/release/liquifact_escrow.wasm
+```
+
+Store the digest in release notes and inject the same WASM into verification tooling (block explorer, internal registry). After deployment, confirm the **on-chain contract code hash** matches the audited artifact for that release tag.
+
+### Backend / config registration
+
+- Persist `LIQUIFACT_ESCROW_CONTRACT_ID` (and network passphrase) in the backend’s secure config.
+- Rollback: **cannot** undeploy a contract; rollback is *forward-only*: deploy a new contract id, point new traffic to it, and sunset the old id. Document state replication needs if invoices were already bound to the old id.
+
+---
+
+## Local development and CI
+
+| Step | Command |
+|------|---------|
+| Format | `cargo fmt --all -- --check` |
+| Build | `cargo build` |
+| Test | `cargo test` |
+| Coverage (≥ 95% lines in CI) | `cargo llvm-cov --features testutils --fail-under-lines 95 --summary-only` |
+
+Install coverage tools:
 
 ```bash
 cargo install cargo-llvm-cov
 rustup component add llvm-tools-preview
-cargo llvm-cov --features testutils --fail-under-lines 95 --summary-only
 ```
 
-## Test & Coverage
+---
 
-- `cargo test`: all unit tests passed (`12` passed).
-- `cargo llvm-cov`: `TOTAL` line coverage `99.40%` (831 lines, 5 missed), meeting the CI threshold of `≥ 95%`.
+## Security notes
 
-Security note: `get_investor_position` is read-only (no Stellar auth required) and returns only on-chain accounting data (addresses, amounts, claim flags). It does not expose any off-chain personal information.
-
-Keep formatting, tests, and coverage passing before opening a PR.
+- **Auth:** state-changing entrypoints use `require_auth()` for the appropriate role (admin, SME, investor).
+- **Legal hold:** is governance-controlled; misuse risk is mitigated by using a multisig `admin` and operational policy.
+- **Collateral record:** is not proof of encumbrance until a future version explicitly enforces token transfers.
+- **Overflow:** `fund` uses `checked_add` on `funded_amount`.
 
 ---
 
 ## Contributing
 
-1. **Fork** the repo and clone your fork.
-2. **Create a branch** from `main`: `git checkout -b feature/your-feature` or `fix/your-fix`.
-3. **Setup**: ensure Rust stable is installed; run `cargo build` and `cargo test`.
-4. **Make changes**:
-   - Follow existing patterns in `escrow/src/lib.rs`.
-   - Add or update tests in `escrow/src/test.rs`.
-   - Format with `cargo fmt`.
-5. **Verify locally**:
-   - `cargo fmt --all -- --check`
-   - `cargo build`
-   - `cargo test --features testutils`
-6. **Commit** with clear messages (e.g. `feat(escrow): X`, `test(escrow): Y`).
-7. **Push** to your fork and open a **Pull Request** to `main`.
-8. Wait for CI and address review feedback.
-
-We welcome new contracts (e.g. settlement, tokenization helpers), tests, and docs that align with LiquiFact's invoice financing flow.
-
----
-
-## Future Improvements
-
-- Multi-escrow support
-- Role-based access control
-- Token integration
-- Event emission
-- Formal verification
-
-## Emergency Refund Mechanism
-
-Emergency mode provides a safe pathway to return funds to investors when normal settlement cannot proceed (e.g., legal dispute, operational failure, or suspected fraud). It follows the same access control, naming, and state-machine patterns as the rest of the contract.
-
-### When It Can Be Activated
-- Escrow status is open (0) or funded (1).
-- Not available after settlement (2).
-- One-way transition: once activated, the escrow remains in emergency mode.
-
-### Who Can Activate
-- Admin only. The stored admin address must authorize the call. This mirrors the access control pattern used in update_maturity.
-
-### How Refunds Are Calculated
-- Each investor receives a refund equal to their recorded contribution balance.
-- Balances are tracked per investor during fund() in instance storage.
-- This is equivalent to a proportional distribution because the total of all investor balances equals the funded amount at the time of activation.
-
-### How Investors Claim
-1. Wait for the admin to activate emergency mode.
-2. Call emergency_refund(investor) with your address as the caller.
-3. The contract verifies:
-   - Emergency mode is active.
-   - You are authorized as the investor (require_auth).
-   - You have not already claimed.
-   - Your recorded balance is greater than zero.
-4. Your individual refund amount is returned and an EmergencyRefunded event is emitted for audit/indexing.
-5. You can verify the claim state with is_refunded(address) or your tracked balance with get_investor_balance(address).
-
-### Security Considerations
-- Checks–Effects–Interactions:
-  - Checks: validate emergency mode, investor auth, not-refunded, and non-zero balance.
-  - Effects: mark the investor as refunded and update escrow accounting before any external interaction.
-  - Interactions: emit EmergencyRefunded event last. In production integrations, token transfers should also occur last.
-- Double-claim prevention:
-  - A RefundedInvestors map marks claimants so repeated calls are rejected.
-- Reentrancy protection:
-  - A simple storage-based guard prevents re-entrant execution of the refund flow and is cleared after each successful refund.
-- Authorization:
-  - activate_emergency requires admin authorization; emergency_refund requires the investor’s authorization.
+1. Branch from `main`.
+2. Run `cargo fmt`, `cargo test`, and the coverage command above before pushing.
+3. Keep README and rustdoc aligned with `escrow/src/lib.rs` behavior.
