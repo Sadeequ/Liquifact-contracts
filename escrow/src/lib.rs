@@ -15,6 +15,9 @@
 //! embed a timelock or council multisig: production deployments should treat `admin` as a
 //! governed contract or multisig so holds cannot be used for indefinite fund lock **without**
 //! off-chain governance recovery (rotation, vote, emergency procedures).
+//!
+//! For cross-contract token integration guidance and explicit unsupported token warnings,
+//! see `README.md` and `docs/ESCROW_TOKEN_INTEGRATION_CHECKLIST.md`.
 
 use soroban_sdk::{
     contract, contractevent, contractimpl, contracttype, symbol_short, Address, Env, Symbol,
@@ -566,3 +569,6 @@ mod test;
 
 #[cfg(test)]
 mod test_funding_target;
+
+#[cfg(test)]
+mod test_token_integration;

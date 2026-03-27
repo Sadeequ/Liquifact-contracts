@@ -131,11 +131,16 @@ rustup component add llvm-tools-preview
 
 ---
 
+## Token integration security checklist
+
+See [`docs/ESCROW_TOKEN_INTEGRATION_CHECKLIST.md`](docs/ESCROW_TOKEN_INTEGRATION_CHECKLIST.md) for the supported token assumptions, explicit unsupported token warnings, and the integration-layer responsibilities required when this escrow contract interacts with external token contracts.
+
 ## Security notes
 
 - **Auth:** state-changing entrypoints use `require_auth()` for the appropriate role (admin, SME, investor).
 - **Legal hold:** is governance-controlled; misuse risk is mitigated by using a multisig `admin` and operational policy.
 - **Collateral record:** is not proof of encumbrance until a future version explicitly enforces token transfers.
+- **Token integration:** external token transfers and token safety validation must live in the integration layer; this contract stores only numeric amount state and collateral metadata.
 - **Overflow:** `fund` uses `checked_add` on `funded_amount`.
 
 ---
