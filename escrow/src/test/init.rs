@@ -17,6 +17,8 @@ fn test_init_stores_escrow() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     assert_eq!(escrow.invoice_id, symbol_short!("INV001"));
     assert_eq!(escrow.admin, admin);
@@ -44,6 +46,8 @@ fn test_init_stores_keyed_invoice_and_lists_it() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     let got = client.get_escrow();
     assert_eq!(got, escrow);
@@ -63,6 +67,8 @@ fn test_init_requires_admin_auth() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
     assert!(
@@ -88,6 +94,8 @@ fn test_init_unauthorized_panics() {
             &Address::generate(&env),
             &None,
             &Address::generate(&env),
+            &None,
+            &None,
             &None,
         );
     }));
@@ -126,6 +134,8 @@ fn test_cost_baseline_init() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
 }
 
@@ -144,6 +154,8 @@ fn test_cost_baseline_init_zero_maturity() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
 }
 
@@ -161,6 +173,8 @@ fn test_cost_baseline_init_max_amount() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
 }
@@ -185,6 +199,8 @@ fn test_init_invoice_id_empty_string_panics() {
         &None,
         &tr,
         &None,
+        &None,
+        &None,
     );
 }
 
@@ -207,6 +223,8 @@ fn test_init_invoice_id_whitespace_panics() {
         &t,
         &None,
         &tr,
+        &None,
+        &None,
         &None,
     );
 }
@@ -232,6 +250,8 @@ fn test_init_invoice_id_too_long_panics() {
         &None,
         &tr,
         &None,
+        &None,
+        &None,
     );
 }
 
@@ -254,6 +274,8 @@ fn test_init_invoice_id_bad_charset_hyphen_panics() {
         &t,
         &None,
         &tr,
+        &None,
+        &None,
         &None,
     );
 }
@@ -278,6 +300,8 @@ fn test_init_stores_registry_some_and_getters() {
         &token,
         &Some(reg.clone()),
         &treasury,
+        &None,
+        &None,
         &None,
     );
     assert_eq!(client.get_registry_ref(), Some(reg));
@@ -304,6 +328,8 @@ fn test_init_registry_none_roundtrip() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
     );
     assert_eq!(client.get_registry_ref(), None);

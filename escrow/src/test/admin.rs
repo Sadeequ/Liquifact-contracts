@@ -3,6 +3,10 @@ use super::*;
 // Admin/governance operations: target changes, maturity changes, admin transfer,
 // legal hold, migration guards, and collateral metadata.
 
+fn sample_digest(env: &Env, byte: u8) -> BytesN<32> {
+    BytesN::from_array(env, &[byte; 32])
+}
+
 #[test]
 fn test_update_maturity_success() {
     let env = Env::default();
@@ -17,6 +21,8 @@ fn test_update_maturity_success() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
     let updated = client.update_maturity(&2000u64);
@@ -40,6 +46,8 @@ fn test_update_maturity_wrong_state() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
     client.fund(&investor, &1_000i128);
@@ -65,6 +73,8 @@ fn test_update_maturity_unauthorized() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     env.mock_auths(&[]);
     client.update_maturity(&2000u64);
@@ -85,6 +95,8 @@ fn test_transfer_admin_updates_admin() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
     let updated = client.transfer_admin(&new_admin);
@@ -107,6 +119,8 @@ fn test_transfer_admin_same_address_panics() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
     client.transfer_admin(&admin);
@@ -165,6 +179,8 @@ fn test_record_collateral_stored_and_does_not_block_settle() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     let c = client.record_sme_collateral_commitment(&symbol_short!("USDC"), &5000i128);
     assert_eq!(c.amount, 5000i128);
@@ -192,6 +208,8 @@ fn test_collateral_zero_panics() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     client.record_sme_collateral_commitment(&symbol_short!("XLM"), &0i128);
 }
@@ -211,6 +229,8 @@ fn test_collateral_requires_sme_auth() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
     env.mock_auths(&[]);
@@ -232,6 +252,8 @@ fn test_legal_hold_blocks_settle_withdraw_claim_and_fund() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
     client.fund(&investor, &TARGET);
@@ -281,6 +303,8 @@ fn test_legal_hold_blocks_new_funds_when_open() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     client.set_legal_hold(&true);
     client.fund(&investor, &1i128);
@@ -306,6 +330,8 @@ fn test_update_funding_target_by_admin_succeeds() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
     );
 
@@ -334,6 +360,8 @@ fn test_update_funding_target_by_non_admin_panics() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
     );
 
@@ -364,6 +392,8 @@ fn test_update_funding_target_fails_when_funded() {
         &None,
         &treasury,
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &5_000i128);
     client.update_funding_target(&10_000i128);
@@ -392,6 +422,8 @@ fn test_update_funding_target_below_funded_panics() {
         &None,
         &treasury,
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &4_000i128);
     client.update_funding_target(&3_000i128);
@@ -419,6 +451,145 @@ fn test_update_funding_target_zero_panics() {
         &None,
         &treasury,
         &None,
+        &None,
+        &None,
     );
     client.update_funding_target(&0i128);
+}
+
+#[test]
+fn test_bind_primary_attestation_single_set_and_get() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let (tok, tre) = free_addresses(&env);
+    client.init(
+        &admin,
+        &String::from_str(&env, "ATT001"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+        &tok,
+        &None,
+        &tre,
+        &None,
+        &None,
+        &None,
+    );
+    assert_eq!(client.get_primary_attestation_hash(), None);
+    let digest = sample_digest(&env, 3);
+    client.bind_primary_attestation_hash(&digest);
+    assert_eq!(client.get_primary_attestation_hash(), Some(digest));
+    assert_eq!(client.get_attestation_append_log().len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "primary attestation already bound")]
+fn test_bind_primary_attestation_twice_panics() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let (tok, tre) = free_addresses(&env);
+    client.init(
+        &admin,
+        &String::from_str(&env, "ATT002"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+        &tok,
+        &None,
+        &tre,
+        &None,
+        &None,
+        &None,
+    );
+    client.bind_primary_attestation_hash(&sample_digest(&env, 9));
+    client.bind_primary_attestation_hash(&sample_digest(&env, 8));
+}
+
+#[test]
+fn test_append_attestation_digest_log_and_primary_coexist() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let (tok, tre) = free_addresses(&env);
+    client.init(
+        &admin,
+        &String::from_str(&env, "ATT003"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+        &tok,
+        &None,
+        &tre,
+        &None,
+        &None,
+        &None,
+    );
+    let primary = sample_digest(&env, 1);
+    let appended = sample_digest(&env, 2);
+    client.bind_primary_attestation_hash(&primary);
+    client.append_attestation_digest(&appended);
+    let log = client.get_attestation_append_log();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log.get(0).unwrap(), appended);
+}
+
+#[test]
+#[should_panic]
+fn test_bind_attestation_requires_admin_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = deploy(&env);
+    let admin = Address::generate(&env);
+    let sme = Address::generate(&env);
+    let (tok, tre) = free_addresses(&env);
+    client.init(
+        &admin,
+        &String::from_str(&env, "ATT004"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+        &tok,
+        &None,
+        &tre,
+        &None,
+        &None,
+        &None,
+    );
+    env.mock_auths(&[]);
+    client.bind_primary_attestation_hash(&sample_digest(&env, 5));
+}
+
+#[test]
+fn test_append_attestation_respects_max_length() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let (tok, tre) = free_addresses(&env);
+    client.init(
+        &admin,
+        &String::from_str(&env, "ATTMAX"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+        &tok,
+        &None,
+        &tre,
+        &None,
+        &None,
+        &None,
+    );
+    for i in 0..MAX_ATTESTATION_APPEND_ENTRIES {
+        client.append_attestation_digest(&sample_digest(&env, i as u8));
+    }
+    assert_eq!(
+        client.get_attestation_append_log().len(),
+        MAX_ATTESTATION_APPEND_ENTRIES
+    );
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.append_attestation_digest(&sample_digest(&env, 99));
+    }))
+    .is_err());
 }

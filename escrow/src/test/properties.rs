@@ -30,6 +30,8 @@ proptest! {
             &None,
             &Address::generate(&env),
             &None,
+            &None,
+            &None,
         );
 
         let before = client.get_escrow().funded_amount;
@@ -66,6 +68,8 @@ proptest! {
             &Address::generate(&env),
             &None,
             &Address::generate(&env),
+            &None,
+            &None,
             &None,
         );
         prop_assert_eq!(escrow.status, 0);

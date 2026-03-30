@@ -18,6 +18,8 @@ fn test_settle_after_full_funding() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &TARGET);
     let settled = client.settle();
@@ -40,6 +42,8 @@ fn test_settle_before_funded_panics() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     client.settle();
 }
@@ -59,6 +63,8 @@ fn test_settle_requires_sme_auth() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
     client.fund(&investor, &1_000i128);
@@ -89,6 +95,8 @@ fn test_settle_unauthorized_panics() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &1_000i128);
     env.mock_auths(&[]);
@@ -112,6 +120,8 @@ fn test_settle_before_maturity_panics() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &1_000i128);
     client.settle();
@@ -132,6 +142,8 @@ fn test_settle_after_maturity_succeeds() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
     client.fund(&investor, &1_000i128);
@@ -156,6 +168,8 @@ fn test_settle_at_exact_maturity_succeeds() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &1_000i128);
     env.ledger().set_timestamp(1000);
@@ -179,6 +193,8 @@ fn test_settle_with_zero_maturity_succeeds_immediately() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &1_000i128);
     let settled = client.settle();
@@ -200,6 +216,8 @@ fn test_settle_at_timestamp_zero_before_maturity_panics() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
     client.fund(&investor, &1_000i128);
@@ -228,6 +246,8 @@ fn test_withdraw_funded_then_cannot_settle() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &TARGET);
     let wd = client.withdraw();
@@ -255,6 +275,8 @@ fn test_claim_investor_twice_panics() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &1_000i128);
     client.settle();
@@ -278,6 +300,8 @@ fn test_claim_before_settle_panics() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
     client.fund(&investor, &1_000i128);
@@ -305,6 +329,8 @@ fn test_claim_blocked_until_commitment_ledger_time() {
         &None,
         &tre,
         &None,
+        &None,
+        &None,
     );
     client.fund_with_commitment(&inv, &1_000i128, &500u64);
     client.settle();
@@ -331,6 +357,8 @@ fn test_claim_succeeds_after_commitment_and_settle() {
         &None,
         &tre,
         &None,
+        &None,
+        &None,
     );
     client.fund_with_commitment(&inv, &1_000i128, &100u64);
     client.settle();
@@ -355,6 +383,8 @@ fn test_cost_baseline_settle() {
         &None,
         &Address::generate(&env),
         &None,
+        &None,
+        &None,
     );
     client.fund(&investor, &TARGET);
     env.ledger().set_timestamp(1001);
@@ -377,6 +407,8 @@ fn test_cost_baseline_full_lifecycle() {
         &Address::generate(&env),
         &None,
         &Address::generate(&env),
+        &None,
+        &None,
         &None,
     );
     client.fund(&investor, &TARGET);
@@ -406,6 +438,8 @@ fn test_sweep_terminal_dust_after_settle_transfers_to_treasury() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
     );
     let investor = Address::generate(&env);
@@ -441,6 +475,8 @@ fn test_sweep_terminal_dust_after_withdraw_and_ledger_tick() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
     );
     let investor = Address::generate(&env);
@@ -479,6 +515,8 @@ fn test_sweep_rejected_when_open() {
         &None,
         &treasury,
         &None,
+        &None,
+        &None,
     );
     let stellar = StellarAssetClient::new(&env, &token);
     stellar.mint(&escrow_id, &100i128);
@@ -507,6 +545,8 @@ fn test_sweep_blocked_under_legal_hold() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
     );
     let investor = Address::generate(&env);
@@ -539,6 +579,8 @@ fn test_sweep_rejects_amount_above_dust_cap() {
         &None,
         &treasury,
         &None,
+        &None,
+        &None,
     );
     let investor = Address::generate(&env);
     client.fund(&investor, &1_000i128);
@@ -567,6 +609,8 @@ fn test_sweep_caps_at_contract_balance() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
     );
     let investor = Address::generate(&env);
@@ -600,6 +644,8 @@ fn test_sweep_requires_treasury_auth() {
         &token,
         &None,
         &treasury,
+        &None,
+        &None,
         &None,
     );
     let investor = Address::generate(&env);
@@ -635,6 +681,8 @@ fn test_differential_settle_maturity_minus_one_vs_exact() {
         &tok,
         &None,
         &tre,
+        &None,
+        &None,
         &None,
     );
     client.fund(&inv, &1_000i128);
